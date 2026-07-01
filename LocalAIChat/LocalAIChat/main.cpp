@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <winhttp.h>
 
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -15,6 +16,142 @@ struct ChatMessage
     std::string role;
     std::string content;
 };
+
+const std::string ChatHistoryFileName = "chat_history.txt";
+
+std::string EscapeHistoryContent(const std::string& content)
+{
+    std::string escaped;
+
+    for (char ch : content)
+    {
+        if (ch == '\\')
+        {
+            escaped += "\\\\";
+        }
+        else if (ch == '\n')
+        {
+            escaped += "\\n";
+        }
+        else if (ch == '\r')
+        {
+            escaped += "\\r";
+        }
+        else if (ch == '\t')
+        {
+            escaped += "\\t";
+        }
+        else
+        {
+            escaped += ch;
+        }
+    }
+
+    return escaped;
+}
+
+std::string RestoreHistoryContent(const std::string& content)
+{
+    std::string restored;
+
+    for (size_t i = 0; i < content.size(); i++)
+    {
+        if (content[i] != '\\' || i + 1 >= content.size())
+        {
+            restored += content[i];
+            continue;
+        }
+
+        char next = content[i + 1];
+
+        if (next == '\\')
+        {
+            restored += '\\';
+        }
+        else if (next == 'n')
+        {
+            restored += '\n';
+        }
+        else if (next == 'r')
+        {
+            restored += '\r';
+        }
+        else if (next == 't')
+        {
+            restored += '\t';
+        }
+        else
+        {
+            restored += next;
+        }
+
+        i++;
+    }
+
+    return restored;
+}
+
+bool SaveChatHistoryToFile(const std::vector<ChatMessage>& chatHistory)
+{
+    std::ofstream outputFile(ChatHistoryFileName);
+
+    if (!outputFile.is_open())
+    {
+        return false;
+    }
+
+    for (const ChatMessage& message : chatHistory)
+    {
+        outputFile << message.role << '\t' << EscapeHistoryContent(message.content) << '\n';
+    }
+
+    return true;
+}
+
+bool LoadChatHistoryFromFile(std::vector<ChatMessage>& chatHistory)
+{
+    DWORD fileAttributes = GetFileAttributesA(ChatHistoryFileName.c_str());
+
+    if (fileAttributes == INVALID_FILE_ATTRIBUTES)
+    {
+        DWORD errorCode = GetLastError();
+
+        if (errorCode == ERROR_FILE_NOT_FOUND || errorCode == ERROR_PATH_NOT_FOUND)
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    std::ifstream inputFile(ChatHistoryFileName);
+
+    if (!inputFile.is_open())
+    {
+        return false;
+    }
+
+    std::string line;
+
+    while (std::getline(inputFile, line))
+    {
+        size_t tabPosition = line.find('\t');
+
+        if (tabPosition == std::string::npos)
+        {
+            std::cout << "형식이 맞지 않는 대화 기록 한 줄을 건너뜁니다: " << line << std::endl;
+            continue;
+        }
+
+        ChatMessage message;
+        message.role = line.substr(0, tabPosition);
+        message.content = RestoreHistoryContent(line.substr(tabPosition + 1));
+
+        chatHistory.push_back(message);
+    }
+
+    return true;
+}
 
 void PrintChatHistory(const std::vector<ChatMessage>& chatHistory)
 {
@@ -57,7 +194,15 @@ void PrintHelp()
 void ClearChatHistory(std::vector<ChatMessage>& chatHistory)
 {
     chatHistory.clear();
-    std::cout << "대화 기록을 모두 삭제했습니다." << std::endl;
+
+    if (SaveChatHistoryToFile(chatHistory))
+    {
+        std::cout << "대화 기록을 모두 삭제했습니다." << std::endl;
+    }
+    else
+    {
+        std::cout << "메모리 대화 기록은 삭제했지만, 파일을 비우지 못했습니다." << std::endl;
+    }
 }
 
 void RemoveLeadingUtf8Bom(std::string& text)
@@ -520,7 +665,19 @@ int main()
     std::vector<ChatMessage> chatHistory;
     std::string userInput;
 
-    std::cout << "Local AI Chat - Step 6" << std::endl;
+    if (LoadChatHistoryFromFile(chatHistory))
+    {
+        if (!chatHistory.empty())
+        {
+            std::cout << "이전 대화 기록 " << chatHistory.size() << "개를 불러왔습니다." << std::endl;
+        }
+    }
+    else
+    {
+        std::cout << "대화 기록 파일을 불러오지 못했습니다. 빈 기록으로 시작합니다." << std::endl;
+    }
+
+    std::cout << "Local AI Chat - Step 7" << std::endl;
     std::cout << "Ollama 로컬 LLM API와 연결하는 콘솔 프로그램입니다." << std::endl;
     std::cout << "실행 전에 Ollama와 qwen3:0.6b 모델이 켜져 있어야 합니다." << std::endl;
     std::cout << "종료하려면 /exit 을 입력하세요." << std::endl;
@@ -596,6 +753,11 @@ int main()
 
                 chatHistory.push_back(userMessage);
                 chatHistory.push_back(assistantMessage);
+
+                if (!SaveChatHistoryToFile(chatHistory))
+                {
+                    std::cout << "주의: 대화 기록을 파일에 저장하지 못했습니다." << std::endl;
+                }
             }
             else
             {

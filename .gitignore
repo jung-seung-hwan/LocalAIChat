@@ -25,3 +25,6 @@ ARM64/
 
 # Build logs
 *.log
+
+# Local chat data
+chat_history.txt
