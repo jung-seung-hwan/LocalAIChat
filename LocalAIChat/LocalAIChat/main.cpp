@@ -760,15 +760,8 @@ bool SendMessageToOllama(const std::string& userInput, std::string& response, st
     return true;
 }
 
-int main()
+void LoadInitialChatHistory(std::vector<ChatMessage>& chatHistory)
 {
-    SetConsoleOutputCP(CP_UTF8);
-    SetConsoleCP(CP_UTF8);
-
-    // 프로그램이 실행되는 동안 대화 기록을 메모리에 저장하는 목록입니다.
-    std::vector<ChatMessage> chatHistory;
-    std::string userInput;
-
     if (LoadChatHistoryFromFile(chatHistory))
     {
         if (!chatHistory.empty())
@@ -780,21 +773,125 @@ int main()
     {
         std::cout << "대화 기록 파일을 불러오지 못했습니다. 빈 기록으로 시작합니다." << std::endl;
     }
+}
 
-    std::cout << "Local AI Chat - Step 8" << std::endl;
+void PrintStartupMessage()
+{
+    std::cout << "Local AI Chat - Step 9" << std::endl;
     std::cout << "Ollama 로컬 LLM API와 연결하는 콘솔 프로그램입니다." << std::endl;
     std::cout << "실행 전에 Ollama와 qwen3:0.6b 모델이 켜져 있어야 합니다." << std::endl;
     std::cout << "종료하려면 /exit 을 입력하세요." << std::endl;
     std::cout << "명령어 목록을 보려면 /help 를 입력하세요." << std::endl;
+}
 
+std::string ReadUserInput()
+{
+    std::string userInput;
+
+    std::cout << std::endl;
+    std::cout << "입력: ";
+
+    std::getline(std::cin, userInput);
+    RemoveLeadingUtf8Bom(userInput);
+
+    return Trim(userInput);
+}
+
+bool HandleCommand(const std::string& userInput, std::vector<ChatMessage>& chatHistory, bool& shouldExit)
+{
+    shouldExit = false;
+
+    if (userInput == "/exit")
+    {
+        std::cout << "프로그램을 종료합니다." << std::endl;
+        shouldExit = true;
+        return true;
+    }
+
+    if (userInput == "/help")
+    {
+        PrintHelp();
+        return true;
+    }
+
+    if (userInput == "/history")
+    {
+        PrintChatHistory(chatHistory);
+        return true;
+    }
+
+    if (userInput == "/clear")
+    {
+        ClearChatHistory(chatHistory);
+        return true;
+    }
+
+    if (userInput[0] == '/')
+    {
+        std::cout << "알 수 없는 명령어입니다. /help 를 입력해 사용 가능한 명령어를 확인하세요." << std::endl;
+        return true;
+    }
+
+    return false;
+}
+
+void SaveSuccessfulConversation(
+    std::vector<ChatMessage>& chatHistory,
+    const std::string& userInput,
+    const std::string& messageContent)
+{
+    ChatMessage userMessage;
+    userMessage.role = "user";
+    userMessage.content = userInput;
+
+    ChatMessage assistantMessage;
+    assistantMessage.role = "assistant";
+    assistantMessage.content = messageContent;
+
+    chatHistory.push_back(userMessage);
+    chatHistory.push_back(assistantMessage);
+
+    if (!SaveChatHistoryToFile(chatHistory))
+    {
+        std::cout << "주의: 대화 기록을 파일에 저장하지 못했습니다." << std::endl;
+    }
+}
+
+void HandleChatMessage(const std::string& userInput, std::vector<ChatMessage>& chatHistory)
+{
+    std::cout << "You: " << userInput << std::endl;
+    std::cout << "AI 응답 요청 중..." << std::endl;
+
+    std::string response;
+    std::string errorMessage;
+
+    bool success = SendMessageToOllama(userInput, response, errorMessage);
+
+    if (!success)
+    {
+        std::cout << "오류: " << errorMessage << std::endl;
+        std::cout << "Ollama가 실행 중인지, qwen3:0.6b 모델이 준비되어 있는지 확인하세요." << std::endl;
+        return;
+    }
+
+    std::string messageContent;
+
+    if (ExtractMessageContent(response, messageContent))
+    {
+        std::cout << "AI: " << messageContent << std::endl;
+        SaveSuccessfulConversation(chatHistory, userInput, messageContent);
+        return;
+    }
+
+    std::cout << "오류: message.content 값을 찾지 못했습니다." << std::endl;
+    std::cout << "디버깅용 전체 JSON: " << response << std::endl;
+}
+
+void RunChatLoop(std::vector<ChatMessage>& chatHistory)
+{
     while (true)
     {
-        std::cout << std::endl;
-        std::cout << "입력: ";
-
-        std::getline(std::cin, userInput);
-        RemoveLeadingUtf8Bom(userInput);
-        userInput = Trim(userInput);
+        std::string userInput = ReadUserInput();
 
         if (userInput == "")
         {
@@ -802,80 +899,32 @@ int main()
             continue;
         }
 
-        if (userInput == "/exit")
+        bool shouldExit = false;
+
+        if (HandleCommand(userInput, chatHistory, shouldExit))
         {
-            std::cout << "프로그램을 종료합니다." << std::endl;
-            break;
-        }
-
-        if (userInput == "/help")
-        {
-            PrintHelp();
-            continue;
-        }
-
-        if (userInput == "/history")
-        {
-            PrintChatHistory(chatHistory);
-            continue;
-        }
-
-        if (userInput == "/clear")
-        {
-            ClearChatHistory(chatHistory);
-            continue;
-        }
-
-        if (userInput[0] == '/')
-        {
-            std::cout << "알 수 없는 명령어입니다. /help 를 입력해 사용 가능한 명령어를 확인하세요." << std::endl;
-            continue;
-        }
-
-        std::cout << "You: " << userInput << std::endl;
-        std::cout << "AI 응답 요청 중..." << std::endl;
-
-        std::string response;
-        std::string errorMessage;
-
-        bool success = SendMessageToOllama(userInput, response, errorMessage);
-
-        if (success)
-        {
-            std::string messageContent;
-
-            if (ExtractMessageContent(response, messageContent))
+            if (shouldExit)
             {
-                std::cout << "AI: " << messageContent << std::endl;
-
-                ChatMessage userMessage;
-                userMessage.role = "user";
-                userMessage.content = userInput;
-
-                ChatMessage assistantMessage;
-                assistantMessage.role = "assistant";
-                assistantMessage.content = messageContent;
-
-                chatHistory.push_back(userMessage);
-                chatHistory.push_back(assistantMessage);
-
-                if (!SaveChatHistoryToFile(chatHistory))
-                {
-                    std::cout << "주의: 대화 기록을 파일에 저장하지 못했습니다." << std::endl;
-                }
+                break;
             }
-            else
-            {
-                std::cout << "오류: message.content 값을 찾지 못했습니다." << std::endl;
-                std::cout << "디버깅용 전체 JSON: " << response << std::endl;
-            }
+
+            continue;
         }
-        else
-        {
-            std::cout << "오류: " << errorMessage << std::endl;
-            std::cout << "Ollama가 실행 중인지, qwen3:0.6b 모델이 준비되어 있는지 확인하세요." << std::endl;
-        }
+
+        HandleChatMessage(userInput, chatHistory);
     }
+}
+
+int main()
+{
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+
+    std::vector<ChatMessage> chatHistory;
+
+    LoadInitialChatHistory(chatHistory);
+    PrintStartupMessage();
+    RunChatLoop(chatHistory);
 
     return 0;
 }
