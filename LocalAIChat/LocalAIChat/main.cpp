@@ -45,6 +45,21 @@ void PrintChatHistory(const std::vector<ChatMessage>& chatHistory)
     }
 }
 
+void PrintHelp()
+{
+    std::cout << "사용 가능한 명령어" << std::endl;
+    std::cout << "/help    : 사용 가능한 명령어를 보여줍니다." << std::endl;
+    std::cout << "/history : 현재 메모리에 저장된 대화 기록을 보여줍니다." << std::endl;
+    std::cout << "/clear   : 현재 메모리에 저장된 대화 기록을 모두 삭제합니다." << std::endl;
+    std::cout << "/exit    : 프로그램을 종료합니다." << std::endl;
+}
+
+void ClearChatHistory(std::vector<ChatMessage>& chatHistory)
+{
+    chatHistory.clear();
+    std::cout << "대화 기록을 모두 삭제했습니다." << std::endl;
+}
+
 void RemoveLeadingUtf8Bom(std::string& text)
 {
     const std::string utf8Bom = "\xEF\xBB\xBF";
@@ -505,11 +520,11 @@ int main()
     std::vector<ChatMessage> chatHistory;
     std::string userInput;
 
-    std::cout << "Local AI Chat - Step 5" << std::endl;
+    std::cout << "Local AI Chat - Step 6" << std::endl;
     std::cout << "Ollama 로컬 LLM API와 연결하는 콘솔 프로그램입니다." << std::endl;
     std::cout << "실행 전에 Ollama와 qwen3:0.6b 모델이 켜져 있어야 합니다." << std::endl;
     std::cout << "종료하려면 /exit 을 입력하세요." << std::endl;
-    std::cout << "대화 기록을 보려면 /history 를 입력하세요." << std::endl;
+    std::cout << "명령어 목록을 보려면 /help 를 입력하세요." << std::endl;
 
     while (true)
     {
@@ -531,9 +546,27 @@ int main()
             break;
         }
 
+        if (userInput == "/help")
+        {
+            PrintHelp();
+            continue;
+        }
+
         if (userInput == "/history")
         {
             PrintChatHistory(chatHistory);
+            continue;
+        }
+
+        if (userInput == "/clear")
+        {
+            ClearChatHistory(chatHistory);
+            continue;
+        }
+
+        if (userInput[0] == '/')
+        {
+            std::cout << "알 수 없는 명령어입니다. /help 를 입력해 사용 가능한 명령어를 확인하세요." << std::endl;
             continue;
         }
 
