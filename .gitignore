@@ -1,0 +1,27 @@
+# Visual Studio local state
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Visual Studio build output directories
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+ARM/
+ARM64/
+
+# C++ build artifacts
+*.obj
+*.exe
+*.ilk
+*.pdb
+*.idb
+*.tlog
+*.lastbuildstate
+*.recipe
+
+# Build logs
+*.log
