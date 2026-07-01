@@ -1,37 +1,262 @@
+#include <windows.h>
+#include <winhttp.h>
+
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
+
+#pragma comment(lib, "winhttp.lib")
+#pragma execution_character_set("utf-8")
+
+std::string EscapeJsonString(const std::string& text)
+{
+    std::ostringstream escaped;
+
+    for (unsigned char ch : text)
+    {
+        if (ch == '\"')
+        {
+            escaped << "\\\"";
+        }
+        else if (ch == '\\')
+        {
+            escaped << "\\\\";
+        }
+        else if (ch == '\n')
+        {
+            escaped << "\\n";
+        }
+        else if (ch == '\r')
+        {
+            escaped << "\\r";
+        }
+        else if (ch == '\t')
+        {
+            escaped << "\\t";
+        }
+        else if (ch < 0x20)
+        {
+            escaped << "\\u"
+                    << std::hex << std::setw(4) << std::setfill('0')
+                    << static_cast<int>(ch)
+                    << std::dec;
+        }
+        else
+        {
+            escaped << ch;
+        }
+    }
+
+    return escaped.str();
+}
+
+std::string BuildRequestBody(const std::string& userInput)
+{
+    return std::string("{")
+        + "\"model\":\"qwen3:0.6b\","
+        + "\"messages\":[{\"role\":\"user\",\"content\":\""
+        + EscapeJsonString(userInput)
+        + "\"}],"
+        + "\"stream\":false"
+        + "}";
+}
+
+void CloseWinHttpHandle(HINTERNET handle)
+{
+    if (handle != NULL)
+    {
+        WinHttpCloseHandle(handle);
+    }
+}
+
+bool SendMessageToOllama(const std::string& userInput, std::string& response, std::string& errorMessage)
+{
+    response = "";
+    errorMessage = "";
+
+    std::string requestBody = BuildRequestBody(userInput);
+
+    HINTERNET session = WinHttpOpen(
+        L"LocalAIChat/1.0",
+        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        WINHTTP_NO_PROXY_NAME,
+        WINHTTP_NO_PROXY_BYPASS,
+        0
+    );
+
+    if (session == NULL)
+    {
+        errorMessage = "WinHttpOpen ì‹¤íŒ¨. ì˜¤ë¥˜ ì½”ë“œ: " + std::to_string(GetLastError());
+        return false;
+    }
+
+    HINTERNET connection = WinHttpConnect(session, L"localhost", 11434, 0);
+
+    if (connection == NULL)
+    {
+        errorMessage = "WinHttpConnect ì‹¤íŒ¨. Ollamaê°€ ì‹¤í–‰ ì¤‘ì¸ì§€ í™•ì¸í•˜ì„¸ìš”. ì˜¤ë¥˜ ì½”ë“œ: " + std::to_string(GetLastError());
+        CloseWinHttpHandle(session);
+        return false;
+    }
+
+    HINTERNET request = WinHttpOpenRequest(
+        connection,
+        L"POST",
+        L"/api/chat",
+        NULL,
+        WINHTTP_NO_REFERER,
+        WINHTTP_DEFAULT_ACCEPT_TYPES,
+        0
+    );
+
+    if (request == NULL)
+    {
+        errorMessage = "WinHttpOpenRequest ì‹¤íŒ¨. ì˜¤ë¥˜ ì½”ë“œ: " + std::to_string(GetLastError());
+        CloseWinHttpHandle(connection);
+        CloseWinHttpHandle(session);
+        return false;
+    }
+
+    std::wstring headers = L"Content-Type: application/json; charset=utf-8\r\n";
+
+    BOOL sendResult = WinHttpSendRequest(
+        request,
+        headers.c_str(),
+        static_cast<DWORD>(-1L),
+        const_cast<char*>(requestBody.c_str()),
+        static_cast<DWORD>(requestBody.size()),
+        static_cast<DWORD>(requestBody.size()),
+        0
+    );
+
+    if (sendResult == FALSE)
+    {
+        errorMessage = "WinHttpSendRequest ì‹¤íŒ¨. Ollama API ìš”ì²­ì„ ë³´ë‚¼ ìˆ˜ ì—†ìŠµë‹ˆë‹¤. ì˜¤ë¥˜ ì½”ë“œ: " + std::to_string(GetLastError());
+        CloseWinHttpHandle(request);
+        CloseWinHttpHandle(connection);
+        CloseWinHttpHandle(session);
+        return false;
+    }
+
+    BOOL receiveResult = WinHttpReceiveResponse(request, NULL);
+
+    if (receiveResult == FALSE)
+    {
+        errorMessage = "WinHttpReceiveResponse ì‹¤íŒ¨. Ollama ì‘ë‹µì„ ë°›ì„ ìˆ˜ ì—†ìŠµë‹ˆë‹¤. ì˜¤ë¥˜ ì½”ë“œ: " + std::to_string(GetLastError());
+        CloseWinHttpHandle(request);
+        CloseWinHttpHandle(connection);
+        CloseWinHttpHandle(session);
+        return false;
+    }
+
+    DWORD statusCode = 0;
+    DWORD statusCodeSize = sizeof(statusCode);
+
+    WinHttpQueryHeaders(
+        request,
+        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX,
+        &statusCode,
+        &statusCodeSize,
+        WINHTTP_NO_HEADER_INDEX
+    );
+
+    DWORD bytesAvailable = 0;
+
+    do
+    {
+        bytesAvailable = 0;
+
+        if (WinHttpQueryDataAvailable(request, &bytesAvailable) == FALSE)
+        {
+            errorMessage = "WinHttpQueryDataAvailable ì‹¤íŒ¨. ì‘ë‹µ í¬ê¸°ë¥¼ í™•ì¸í•  ìˆ˜ ì—†ìŠµë‹ˆë‹¤. ì˜¤ë¥˜ ì½”ë“œ: " + std::to_string(GetLastError());
+            CloseWinHttpHandle(request);
+            CloseWinHttpHandle(connection);
+            CloseWinHttpHandle(session);
+            return false;
+        }
+
+        if (bytesAvailable > 0)
+        {
+            std::string buffer(bytesAvailable, '\0');
+            DWORD bytesRead = 0;
+
+            if (WinHttpReadData(request, &buffer[0], bytesAvailable, &bytesRead) == FALSE)
+            {
+                errorMessage = "WinHttpReadData ì‹¤íŒ¨. ì‘ë‹µì„ ì½ì„ ìˆ˜ ì—†ìŠµë‹ˆë‹¤. ì˜¤ë¥˜ ì½”ë“œ: " + std::to_string(GetLastError());
+                CloseWinHttpHandle(request);
+                CloseWinHttpHandle(connection);
+                CloseWinHttpHandle(session);
+                return false;
+            }
+
+            buffer.resize(bytesRead);
+            response += buffer;
+        }
+    } while (bytesAvailable > 0);
+
+    CloseWinHttpHandle(request);
+    CloseWinHttpHandle(connection);
+    CloseWinHttpHandle(session);
+
+    if (statusCode != 200)
+    {
+        errorMessage = "Ollama APIê°€ HTTP ìƒíƒœ ì½”ë“œ " + std::to_string(statusCode) + " ë¥¼ ë°˜í™˜í–ˆìŠµë‹ˆë‹¤.";
+        return false;
+    }
+
+    return true;
+}
 
 int main()
 {
-    // »ç¿ëÀÚ°¡ ÀÔ·ÂÇÑ ÇÑ ÁÙ ÀüÃ¼¸¦ ÀúÀåÇÒ º¯¼öÀÔ´Ï´Ù.
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+
     std::string userInput;
 
-    std::cout << "Local AI Chat - Step 2" << std::endl;
-    std::cout << "¾ÆÁ÷ ·ÎÄÃ LLM°ú ¿¬°áµÇÁö ¾ÊÀº ±âº» Ã¤ÆÃ ÇÁ·Î±×·¥ÀÔ´Ï´Ù." << std::endl;
-    std::cout << "Á¾·áÇÏ·Á¸é /exit À» ÀÔ·ÂÇÏ¼¼¿ä." << std::endl;
+    std::cout << "Local AI Chat - Step 3" << std::endl;
+    std::cout << "Ollama ë¡œì»¬ LLM APIì™€ ì—°ê²°í•˜ëŠ” ì½˜ì†” í”„ë¡œê·¸ë¨ì…ë‹ˆë‹¤." << std::endl;
+    std::cout << "ì‹¤í–‰ ì „ì— Ollamaì™€ qwen3:0.6b ëª¨ë¸ì´ ì¼œì ¸ ìˆì–´ì•¼ í•©ë‹ˆë‹¤." << std::endl;
+    std::cout << "ì¢…ë£Œí•˜ë ¤ë©´ /exit ì„ ì…ë ¥í•˜ì„¸ìš”." << std::endl;
 
     while (true)
     {
         std::cout << std::endl;
-        std::cout << "ÀÔ·Â: ";
+        std::cout << "ì…ë ¥: ";
 
-        // getlineÀº °ø¹éÀ» Æ÷ÇÔÇÑ ÇÑ ÁÙ ÀüÃ¼¸¦ ÀÔ·Â¹Ş½À´Ï´Ù.
         std::getline(std::cin, userInput);
 
         if (userInput == "")
         {
-            std::cout << "ºó ÀÔ·ÂÀÔ´Ï´Ù. ´Ù½Ã ÀÔ·ÂÇØÁÖ¼¼¿ä." << std::endl;
+            std::cout << "ë¹ˆ ì…ë ¥ì…ë‹ˆë‹¤. ë‹¤ì‹œ ì…ë ¥í•´ì£¼ì„¸ìš”." << std::endl;
             continue;
         }
 
         if (userInput == "/exit")
         {
-            std::cout << "ÇÁ·Î±×·¥À» Á¾·áÇÕ´Ï´Ù." << std::endl;
+            std::cout << "í”„ë¡œê·¸ë¨ì„ ì¢…ë£Œí•©ë‹ˆë‹¤." << std::endl;
             break;
         }
 
         std::cout << "You: " << userInput << std::endl;
-        std::cout << "AI: ¾ÆÁ÷ ·ÎÄÃ LLM°ú ¿¬°áµÇÁö ¾Ê¾Ò½À´Ï´Ù." << std::endl;
+        std::cout << "AI ì‘ë‹µ ìš”ì²­ ì¤‘..." << std::endl;
+
+        std::string response;
+        std::string errorMessage;
+
+        bool success = SendMessageToOllama(userInput, response, errorMessage);
+
+        if (success)
+        {
+            std::cout << "AI ì‘ë‹µ(JSON ì „ì²´): " << response << std::endl;
+        }
+        else
+        {
+            std::cout << "ì˜¤ë¥˜: " << errorMessage << std::endl;
+            std::cout << "Ollamaê°€ ì‹¤í–‰ ì¤‘ì¸ì§€, qwen3:0.6b ëª¨ë¸ì´ ì¤€ë¹„ë˜ì–´ ìˆëŠ”ì§€ í™•ì¸í•˜ì„¸ìš”." << std::endl;
+        }
     }
 
     return 0;
