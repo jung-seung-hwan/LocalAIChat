@@ -215,6 +215,44 @@ void RemoveLeadingUtf8Bom(std::string& text)
     }
 }
 
+std::string Trim(const std::string& text)
+{
+    size_t start = 0;
+
+    while (start < text.size())
+    {
+        char ch = text[start];
+
+        if (ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r')
+        {
+            break;
+        }
+
+        start++;
+    }
+
+    if (start == text.size())
+    {
+        return "";
+    }
+
+    size_t end = text.size() - 1;
+
+    while (end > start)
+    {
+        char ch = text[end];
+
+        if (ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r')
+        {
+            break;
+        }
+
+        end--;
+    }
+
+    return text.substr(start, end - start + 1);
+}
+
 std::string EscapeJsonString(const std::string& text)
 {
     std::ostringstream escaped;
@@ -509,6 +547,72 @@ bool ExtractMessageContent(const std::string& json, std::string& messageContent)
     return DecodeJsonString(json, valueStart, messageContent, nextPosition);
 }
 
+bool ExtractJsonStringField(const std::string& json, const std::string& fieldName, std::string& fieldValue)
+{
+    fieldValue = "";
+
+    std::string key = "\"" + fieldName + "\"";
+    size_t keyPosition = json.find(key);
+
+    if (keyPosition == std::string::npos)
+    {
+        return false;
+    }
+
+    size_t colonPosition = json.find(':', keyPosition);
+
+    if (colonPosition == std::string::npos)
+    {
+        return false;
+    }
+
+    size_t valueStart = colonPosition + 1;
+    SkipWhitespace(json, valueStart);
+
+    size_t nextPosition = 0;
+    return DecodeJsonString(json, valueStart, fieldValue, nextPosition);
+}
+
+std::string BuildWinHttpErrorMessage(const std::string& action, DWORD errorCode)
+{
+    std::string message = action + " 실패. 오류 코드: " + std::to_string(errorCode);
+
+    if (errorCode == ERROR_WINHTTP_CANNOT_CONNECT
+        || errorCode == ERROR_WINHTTP_CONNECTION_ERROR
+        || errorCode == ERROR_WINHTTP_TIMEOUT)
+    {
+        message += "\nOllama 서버가 꺼져 있거나 localhost:11434에 연결할 수 없습니다.";
+        message += "\n확인: PowerShell에서 ollama run qwen3:0.6b 를 실행했는지 확인하세요.";
+    }
+
+    return message;
+}
+
+std::string BuildOllamaApiErrorMessage(DWORD statusCode, const std::string& response)
+{
+    std::string message = "Ollama API가 HTTP 상태 코드 "
+        + std::to_string(statusCode)
+        + " 를 반환했습니다.";
+
+    std::string ollamaError;
+
+    if (ExtractJsonStringField(response, "error", ollamaError))
+    {
+        message += "\nOllama 오류 메시지: " + ollamaError;
+        message += "\n모델 이름이 qwen3:0.6b인지, 해당 모델이 설치되어 있는지 확인하세요.";
+    }
+    else if (!response.empty())
+    {
+        message += "\n응답 본문: " + response;
+    }
+    else
+    {
+        message += "\n응답 본문이 비어 있습니다.";
+    }
+
+    return message;
+}
+
 void CloseWinHttpHandle(HINTERNET handle)
 {
     if (handle != NULL)
@@ -534,7 +638,7 @@ bool SendMessageToOllama(const std::string& userInput, std::string& response, st
 
     if (session == NULL)
     {
-        errorMessage = "WinHttpOpen 실패. 오류 코드: " + std::to_string(GetLastError());
+        errorMessage = BuildWinHttpErrorMessage("WinHttpOpen", GetLastError());
         return false;
     }
 
@@ -542,7 +646,7 @@ bool SendMessageToOllama(const std::string& userInput, std::string& response, st
 
     if (connection == NULL)
     {
-        errorMessage = "WinHttpConnect 실패. Ollama가 실행 중인지 확인하세요. 오류 코드: " + std::to_string(GetLastError());
+        errorMessage = BuildWinHttpErrorMessage("WinHttpConnect", GetLastError());
         CloseWinHttpHandle(session);
         return false;
     }
@@ -559,7 +663,7 @@ bool SendMessageToOllama(const std::string& userInput, std::string& response, st
 
     if (request == NULL)
     {
-        errorMessage = "WinHttpOpenRequest 실패. 오류 코드: " + std::to_string(GetLastError());
+        errorMessage = BuildWinHttpErrorMessage("WinHttpOpenRequest", GetLastError());
         CloseWinHttpHandle(connection);
         CloseWinHttpHandle(session);
         return false;
@@ -579,7 +683,7 @@ bool SendMessageToOllama(const std::string& userInput, std::string& response, st
 
     if (sendResult == FALSE)
     {
-        errorMessage = "WinHttpSendRequest 실패. Ollama API 요청을 보낼 수 없습니다. 오류 코드: " + std::to_string(GetLastError());
+        errorMessage = BuildWinHttpErrorMessage("WinHttpSendRequest", GetLastError());
         CloseWinHttpHandle(request);
         CloseWinHttpHandle(connection);
         CloseWinHttpHandle(session);
@@ -590,7 +694,7 @@ bool SendMessageToOllama(const std::string& userInput, std::string& response, st
 
     if (receiveResult == FALSE)
     {
-        errorMessage = "WinHttpReceiveResponse 실패. Ollama 응답을 받을 수 없습니다. 오류 코드: " + std::to_string(GetLastError());
+        errorMessage = BuildWinHttpErrorMessage("WinHttpReceiveResponse", GetLastError());
         CloseWinHttpHandle(request);
         CloseWinHttpHandle(connection);
         CloseWinHttpHandle(session);
@@ -617,7 +721,7 @@ bool SendMessageToOllama(const std::string& userInput, std::string& response, st
 
         if (WinHttpQueryDataAvailable(request, &bytesAvailable) == FALSE)
         {
-            errorMessage = "WinHttpQueryDataAvailable 실패. 응답 크기를 확인할 수 없습니다. 오류 코드: " + std::to_string(GetLastError());
+            errorMessage = BuildWinHttpErrorMessage("WinHttpQueryDataAvailable", GetLastError());
             CloseWinHttpHandle(request);
             CloseWinHttpHandle(connection);
             CloseWinHttpHandle(session);
@@ -631,7 +735,7 @@ bool SendMessageToOllama(const std::string& userInput, std::string& response, st
 
             if (WinHttpReadData(request, &buffer[0], bytesAvailable, &bytesRead) == FALSE)
             {
-                errorMessage = "WinHttpReadData 실패. 응답을 읽을 수 없습니다. 오류 코드: " + std::to_string(GetLastError());
+                errorMessage = BuildWinHttpErrorMessage("WinHttpReadData", GetLastError());
                 CloseWinHttpHandle(request);
                 CloseWinHttpHandle(connection);
                 CloseWinHttpHandle(session);
@@ -649,7 +753,7 @@ bool SendMessageToOllama(const std::string& userInput, std::string& response, st
 
     if (statusCode != 200)
     {
-        errorMessage = "Ollama API가 HTTP 상태 코드 " + std::to_string(statusCode) + " 를 반환했습니다.";
+        errorMessage = BuildOllamaApiErrorMessage(statusCode, response);
         return false;
     }
 
@@ -677,7 +781,7 @@ int main()
         std::cout << "대화 기록 파일을 불러오지 못했습니다. 빈 기록으로 시작합니다." << std::endl;
     }
 
-    std::cout << "Local AI Chat - Step 7" << std::endl;
+    std::cout << "Local AI Chat - Step 8" << std::endl;
     std::cout << "Ollama 로컬 LLM API와 연결하는 콘솔 프로그램입니다." << std::endl;
     std::cout << "실행 전에 Ollama와 qwen3:0.6b 모델이 켜져 있어야 합니다." << std::endl;
     std::cout << "종료하려면 /exit 을 입력하세요." << std::endl;
@@ -690,10 +794,11 @@ int main()
 
         std::getline(std::cin, userInput);
         RemoveLeadingUtf8Bom(userInput);
+        userInput = Trim(userInput);
 
         if (userInput == "")
         {
-            std::cout << "빈 입력입니다. 다시 입력해주세요." << std::endl;
+            std::cout << "빈 입력이거나 공백만 입력되었습니다. 다시 입력해주세요." << std::endl;
             continue;
         }
 
