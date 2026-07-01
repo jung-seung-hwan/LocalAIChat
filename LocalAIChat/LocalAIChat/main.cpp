@@ -5,9 +5,55 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #pragma comment(lib, "winhttp.lib")
 #pragma execution_character_set("utf-8")
+
+struct ChatMessage
+{
+    std::string role;
+    std::string content;
+};
+
+void PrintChatHistory(const std::vector<ChatMessage>& chatHistory)
+{
+    if (chatHistory.empty())
+    {
+        std::cout << "저장된 대화 기록이 없습니다." << std::endl;
+        return;
+    }
+
+    std::cout << "현재 메모리에 저장된 대화 기록" << std::endl;
+
+    for (size_t i = 0; i < chatHistory.size(); i++)
+    {
+        const ChatMessage& message = chatHistory[i];
+
+        if (message.role == "user")
+        {
+            std::cout << i + 1 << ". You: " << message.content << std::endl;
+        }
+        else if (message.role == "assistant")
+        {
+            std::cout << i + 1 << ". AI: " << message.content << std::endl;
+        }
+        else
+        {
+            std::cout << i + 1 << ". " << message.role << ": " << message.content << std::endl;
+        }
+    }
+}
+
+void RemoveLeadingUtf8Bom(std::string& text)
+{
+    const std::string utf8Bom = "\xEF\xBB\xBF";
+
+    if (text.rfind(utf8Bom, 0) == 0)
+    {
+        text.erase(0, utf8Bom.size());
+    }
+}
 
 std::string EscapeJsonString(const std::string& text)
 {
@@ -455,12 +501,15 @@ int main()
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
 
+    // 프로그램이 실행되는 동안 대화 기록을 메모리에 저장하는 목록입니다.
+    std::vector<ChatMessage> chatHistory;
     std::string userInput;
 
-    std::cout << "Local AI Chat - Step 4" << std::endl;
+    std::cout << "Local AI Chat - Step 5" << std::endl;
     std::cout << "Ollama 로컬 LLM API와 연결하는 콘솔 프로그램입니다." << std::endl;
     std::cout << "실행 전에 Ollama와 qwen3:0.6b 모델이 켜져 있어야 합니다." << std::endl;
     std::cout << "종료하려면 /exit 을 입력하세요." << std::endl;
+    std::cout << "대화 기록을 보려면 /history 를 입력하세요." << std::endl;
 
     while (true)
     {
@@ -468,6 +517,7 @@ int main()
         std::cout << "입력: ";
 
         std::getline(std::cin, userInput);
+        RemoveLeadingUtf8Bom(userInput);
 
         if (userInput == "")
         {
@@ -479,6 +529,12 @@ int main()
         {
             std::cout << "프로그램을 종료합니다." << std::endl;
             break;
+        }
+
+        if (userInput == "/history")
+        {
+            PrintChatHistory(chatHistory);
+            continue;
         }
 
         std::cout << "You: " << userInput << std::endl;
@@ -496,6 +552,17 @@ int main()
             if (ExtractMessageContent(response, messageContent))
             {
                 std::cout << "AI: " << messageContent << std::endl;
+
+                ChatMessage userMessage;
+                userMessage.role = "user";
+                userMessage.content = userInput;
+
+                ChatMessage assistantMessage;
+                assistantMessage.role = "assistant";
+                assistantMessage.content = messageContent;
+
+                chatHistory.push_back(userMessage);
+                chatHistory.push_back(assistantMessage);
             }
             else
             {
